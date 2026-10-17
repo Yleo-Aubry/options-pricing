@@ -1,0 +1,15 @@
+# Build
+build/
+cmake-build-*/
+*.o
+*.obj
+*.exe
+
+# Editors
+.vscode/
+.idea/
+.DS_Store
+
+# Claude Code
+.claude/
+CLAUDE.md

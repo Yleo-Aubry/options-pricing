@@ -1,0 +1,289 @@
+\documentclass[a4paper,12pt]{article}
+
+% =======================================================
+% PACKAGES ET CONFIGURATION
+% =======================================================
+\usepackage[utf8]{inputenc}      % Encodage
+\usepackage[T1]{fontenc}         % Police
+\usepackage[french]{babel}       % Langue
+\usepackage{geometry}            % Marges
+\geometry{hmargin=2.5cm,vmargin=2.5cm}
+
+\usepackage{amsmath, amssymb, amsfonts, mathtools} % Maths avancées
+\usepackage{graphicx}            % Images
+\usepackage{float}               % Placement des figures
+\usepackage{xcolor}              % Couleurs
+\usepackage{hyperref}            % Liens cliquables
+\usepackage{fancyhdr}            % En-têtes et pieds de page
+\usepackage{listings}            % Pour le code
+
+% Configuration des liens
+\hypersetup{
+    colorlinks=true,
+    linkcolor=black,
+    urlcolor=blue,
+    citecolor=blue
+}
+
+% Configuration de l'en-tête
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{Projet C++ : Pricing EDP}
+\fancyhead[R]{\today}
+\fancyfoot[C]{\thepage}
+
+% =======================================================
+% DÉBUT DU DOCUMENT
+% =======================================================
+\begin{document}
+
+% --- PAGE DE GARDE ---
+\begin{titlepage}
+    \centering
+    \vspace*{1cm}
+    
+    {\Large \textbf{RAPPORT DE PROJET C++}}\\[0.5cm]
+  
+    
+    % Ligne de séparation
+    \rule{\linewidth}{0.5mm} \\[0.4cm]
+    { \huge \bfseries Pricing d'Options par Résolution d'EDP \\[0.2cm] 
+      Modèle de Black-Scholes \& Schéma de Crank-Nicolson } \\[0.4cm]
+    \rule{\linewidth}{0.5mm} \\[2cm]
+    
+    \begin{minipage}{0.4\textwidth}
+        \begin{flushleft} \large
+            \emph{Auteurs :}\\
+            Yléo AUBRY\\
+            Yepi Sylvian Jean-Mederick BESSI\\
+            Ayman GRAZIANA
+        \end{flushleft}
+    \end{minipage}
+    \begin{minipage}{0.4\textwidth}
+        \begin{flushright} \large
+            \emph{Date de rendu :}\\
+            16 décembre 2025
+        \end{flushright}
+    \end{minipage}
+
+    % ... (après le résumé abstract) ...
+
+    \vfill % Pousse tout ce qui suit en bas de page
+
+    \begin{center}
+        % Remplace 'logo_ensae' par le nom exact de ton fichier image
+        % Ajuste 'width' pour changer la taille
+        \includegraphics[width=1\textwidth]{logo_ensae_ip.png} 
+    \end{center}
+
+\end{titlepage}
+ % Résumé technique en bas de page
+    \begin{abstract}
+        Ce projet implémente un moteur de valorisation d'options (Pricer) en C++ basé sur la résolution numérique de l'équation aux dérivées partielles de Black-Scholes. L'architecture utilise une transformation logarithmique du sous-jacent pour garantir la stabilité des coefficients, couplée à un schéma de différences finies implicite (Crank-Nicolson) résolu par l'algorithme de Thomas. Le programme calcule le prix ainsi que les sensibilités (Grecques) avec une précision de l'ordre de $10^{-3}$.
+    \end{abstract}
+  \newpage  
+% --- TABLE DES MATIÈRES ---
+\tableofcontents
+\newpage
+
+% =======================================================
+% CHAPITRE 1 : ANALYSE MATHÉMATIQUE
+% =======================================================
+\section{Cadre Mathématique et Numérique}
+
+L'objectif du programme est de déterminer la valeur $V(S,t)$ d'une option européenne en résolvant l'Equation aux Dérivées Partielles (EDP) de Black-Scholes-Merton.
+
+\subsection{L'Équation Initiale et ses Limites}
+Sous les hypothèses standard (marché sans arbitrage, volatilité constante, taux sans risque constant), le prix de l'option vérifie :
+\begin{equation}
+    \frac{\partial V}{\partial t} + \frac{1}{2}\sigma^2 S^2 \frac{\partial^2 V}{\partial S^2} + rS \frac{\partial V}{\partial S} - rV = 0
+    \label{eq:bs_base}
+\end{equation}
+Avec la condition terminale $V(S, T) = \text{Payoff}(S)$.
+
+\paragraph{Problème numérique :}
+La discrétisation directe de l'équation (\ref{eq:bs_base}) est problématique car les coefficients de diffusion ($\frac{1}{2}\sigma^2 S^2$) et de convection ($rS$) dépendent de la variable d'espace $S$. Cela entraîne deux conséquences néfastes pour le code :
+\begin{enumerate}
+    \item La matrice du système linéaire doit être recalculée à chaque ligne de la grille, ce qui est coûteux.
+    \item La stabilité du schéma numérique est difficile à garantir pour des $S$ grands (terme en $S^2$ explosif).
+\end{enumerate}
+
+\subsection{Transformation Logarithmique (Heat Equation)}
+Pour pallier ces problèmes, nous avons implémenté un changement de variable spatial.
+Posons $x = \ln(S)$. Le domaine $S \in [0, +\infty[$ devient $x \in ]-\infty, +\infty[$.
+En appliquant la règle de la chaîne (Chain Rule) :
+$$ \frac{\partial V}{\partial S} = \frac{1}{S}\frac{\partial V}{\partial x}, \quad \frac{\partial^2 V}{\partial S^2} = \frac{1}{S^2}\left(\frac{\partial^2 V}{\partial x^2} - \frac{\partial V}{\partial x}\right) $$
+
+En substituant dans (\ref{eq:bs_base}), les termes en $S$ et $S^2$ s'annulent parfaitement. L'équation devient une convection-diffusion à \textbf{coefficients constants} :
+\begin{equation}
+    \frac{\partial V}{\partial t} + \frac{1}{2}\sigma^2 \frac{\partial^2 V}{\partial x^2} + \left(r - \frac{1}{2}\sigma^2\right) \frac{\partial V}{\partial x} - rV = 0
+    \label{eq:bs_log}
+\end{equation}
+C'est cette équation précise que notre classe \texttt{PDESolver} résout. L'avantage majeur est que la matrice de résolution est constante, permettant de la pré-calculer une seule fois (méthode \texttt{precomputeMatrices}).
+
+\subsection{Discrétisation par Crank-Nicolson}
+Nous utilisons une grille spatio-temporelle finie.
+\begin{itemize}
+    \item Espace : $N$ points $x_i$ uniformément répartis entre $\ln(S_{\min})$ et $\ln(S_{\max})$.
+    \item Temps : $M$ pas de temps $\Delta t$.
+\end{itemize}
+
+Le schéma de Crank-Nicolson est une moyenne arithmétique entre le schéma Explicite (instable) et le schéma Implicite (stable mais diffusif). Il offre une précision en $O(\Delta t^2, \Delta x^2)$ et une stabilité inconditionnelle.
+
+L'équation discrétisée s'écrit :
+\begin{equation}
+    \frac{V_i^{n+1} - V_i^n}{\Delta t} = \frac{1}{2} \mathcal{L}_h V_i^{n+1} + \frac{1}{2} \mathcal{L}_h V_i^n
+\end{equation}
+Où $\mathcal{L}_h$ est l'opérateur discret spatial. Cela mène au système linéaire matriciel :
+\begin{equation}
+    \mathbf{A} V^n = \mathbf{B} V^{n+1} + \text{Limites}
+\end{equation}
+Dans notre code, $\mathbf{A}$ (matrice implicite à gauche) et $\mathbf{B}$ (matrice explicite à droite) sont tridiagonales.
+
+\subsection{Résolution Algorithmique}
+À chaque pas de temps (en remontant de $T$ à $0$), nous devons résoudre le système $\mathbf{A} X = D$.
+Plutôt que d'utiliser une inversion matricielle générique coûteuse en $O(N^3)$, nous avons implémenté l'\textbf{Algorithme de Thomas} (TDMA) dans le module \texttt{LinearSolver}.
+Cet algorithme exploite la structure tridiagonale pour trouver la solution exacte en complexité linéaire $O(N)$, garantissant une exécution quasi-instantanée même pour des grilles fines ($N=1000$).
+
+\subsection{Calcul des Grecques}
+Les sensibilités sont extraites directement de la grille finale par différences finies, en tenant compte du changement de variable :
+\begin{itemize}
+    \item \textbf{Delta ($\Delta$)} : $\frac{\partial V}{\partial S} = \frac{1}{S} \frac{\partial V}{\partial x} \approx \frac{V_{i+1}-V_i}{S_i \Delta x}$
+    \item \textbf{Gamma ($\Gamma$)} : $\frac{\partial^2 V}{\partial S^2} = \frac{1}{S^2} \left( \frac{\partial^2 V}{\partial x^2} - \frac{\partial V}{\partial x} \right)$
+\end{itemize}
+
+\newpage
+% =======================================================
+% CHAPITRE : ARCHITECTURE LOGICIELLE
+% =======================================================
+\section{Architecture Logicielle et Organisation}
+
+Afin de garantir la maintenabilité et l'extensibilité du projet, nous avons adopté une architecture modulaire respectant les standards industriels du C++ (séparation Interface/Implémentation) et les principes de conception SOLID.
+
+\subsection{Arborescence du Projet}
+L'organisation des fichiers suit la convention standard de CMake, séparant clairement les déclarations (\texttt{.h}) des définitions (\texttt{.cpp}) :
+
+\begin{lstlisting}[caption={Structure des fichiers du projet}, label={lst:arbo}]
+Projet_EDP/
+|-- CMakeLists.txt        # Script de compilation automatise
+|-- include/              # Interfaces (Contrats)
+|   |-- LinearSolver.h    # Declaration du solveur matriciel
+|   |-- Payoff.h          # Classe abstraite des produits financiers
+|   |-- PDESolver.h       # Moteur de resolution EDP
+|   |-- Interface.h       # Gestion des entrees/sorties utilisateur
+|-- src/                  # Implementations (Code source)
+    |-- LinearSolver.cpp  # Algorithme de Thomas
+    |-- PDESolver.cpp     # Logique de Crank-Nicolson
+    |-- Interface.cpp     # Code de l'interface console
+    |-- main.cpp          # Point d'entree et tests unitaires
+\end{lstlisting}
+
+\subsection{Description des Modules}
+
+Le code est divisé en trois couches distinctes de responsabilité :
+
+\subsubsection{ La Couche Mathématique (\texttt{LinearSolver})}
+Ce module est totalement indépendant de la finance. Il fournit les outils d'algèbre linéaire nécessaires à la résolution numérique.
+\begin{itemize}
+    \item \textbf{Rôle :} Résoudre des systèmes linéaires tridiagonaux $Ax=d$.
+    \item \textbf{Algorithme :} Thomas (TDMA), choisi pour sa complexité en $O(N)$ contre $O(N^3)$ pour une inversion standard.
+    \item \textbf{Optimisation :} Utilisation de références constantes (\texttt{const std::vector\&}) pour éviter la copie coûteuse de vecteurs en mémoire.
+\end{itemize}
+
+\subsubsection{ La Couche Financière "Produit" (\texttt{Payoff})}
+Cette couche définit \textit{ce que} l'on price. Nous avons utilisé le \textbf{Design Pattern Strategy} via le polymorphisme.
+\begin{itemize}
+    \item \textbf{Classe Abstraite :} \texttt{Payoff} définit une méthode virtuelle pure \texttt{operator()(double spot)}.
+    \item \textbf{Flexibilité :} Le moteur de pricing ne connaît pas le type d'option (Call, Put, Digitale). Il manipule une référence générique \texttt{Payoff\&}. Cela permet d'ajouter de nouveaux types d'options sans modifier une seule ligne du moteur de calcul (Principe Open/Closed).
+\end{itemize}
+
+\subsubsection{ La Couche Moteur (\texttt{PDESolver})}
+C'est le cœur du programme qui orchestre la résolution.
+\begin{itemize}
+    \item \textbf{Initialisation :} Conversion des paramètres de marché $(S, K, r, \sigma)$ en paramètres de grille logarithmique.
+    \item \textbf{Pré-calcul :} Les matrices de l'équation de la chaleur sont constantes. Elles sont construites une seule fois lors de l'instanciation pour optimiser la boucle temporelle.
+    \item \textbf{Résolution :} Implémente la boucle de temps \textit{backward} et gère les conditions aux limites de Dirichlet spécifiques au type d'option (déduites asymptotiquement).
+\end{itemize}
+
+\subsection{Flux de Données}
+Le programme suit un flux d'exécution séquentiel :
+\begin{enumerate}
+    \item L'\textbf{Interface} récupère les paramètres utilisateur et instancie un objet \texttt{Payoff} concret (ex: \texttt{PayoffCall}).
+    \item Le \textbf{PDESolver} est initialisé avec les paramètres de grille.
+    \item La méthode \texttt{solve()} est appelée. Elle construit le maillage, et à chaque pas de temps, délègue la résolution du système linéaire au \texttt{LinearSolver}.
+    \item Les résultats (Prix, Delta, Gamma) sont renvoyés sous forme d'une structure \texttt{PricingResults} pour être affichés ou exportés.
+\end{enumerate}
+\newpage
+% =======================================================
+% CHAPITRE : MANUEL D'UTILISATION
+% =======================================================
+\section{Manuel d'Utilisation et Guide de Compilation}
+
+Ce chapitre détaille la procédure exacte pour compiler le code source et exécuter le programme de pricing. Le projet a été conçu pour être portable et fonctionne sous Windows (via MinGW ou WSL), macOS et Linux.
+
+\subsection{Pré-requis Système}
+Avant de compiler, assurez-vous de disposer des outils suivants :
+\begin{itemize}
+    \item \textbf{Compilateur C++ :} Compatible C++17 (ex: \texttt{g++}, \texttt{clang++} ou MSVC).
+    \item \textbf{Système de Build :} \texttt{CMake} (version 3.10 ou supérieure).
+    \item \textbf{Terminal :} PowerShell, Bash ou Terminal VS Code.
+\end{itemize}
+
+\subsection{Procédure de Compilation (Recommandée)}
+Nous utilisons \textbf{CMake} pour automatiser la génération des fichiers de construction. Cette méthode, dite "Out-of-Source", permet de ne pas polluer le code source avec des fichiers temporaires.
+
+\begin{enumerate}
+    \item Ouvrez un terminal à la racine du dossier \texttt{Projet\_EDP}.
+    \item Créez un répertoire de construction et déplacez-vous dedans :
+\begin{lstlisting}[language=bash]
+mkdir build
+cd build
+\end{lstlisting}
+
+    \item Générez les fichiers de makefile (CMake détectera automatiquement les sources dans \texttt{src/} et les headers dans \texttt{include/}) :
+\begin{lstlisting}[language=bash]
+cmake ..
+\end{lstlisting}
+    \textit{Note : Sous Windows avec MinGW, si la commande échoue, utilisez : \texttt{cmake -G "Unix Makefiles" ..}}
+
+    \item Compilez l'exécutable :
+\begin{lstlisting}[language=bash]
+make
+\end{lstlisting}
+    Si la compilation réussit, un fichier exécutable \texttt{SolverEDP} (ou \texttt{SolverEDP.exe}) est généré dans le dossier \texttt{build}.
+\end{enumerate}
+
+\subsection{Procédure de Compilation Manuelle (Alternative)}
+Si CMake n'est pas disponible, il est possible de compiler directement avec \texttt{g++} en ligne de commande. Attention à bien lier tous les fichiers sources et à inclure le dossier des headers.
+
+Depuis la racine du projet :
+\begin{lstlisting}[language=bash]
+g++ src/main.cpp src/LinearSolver.cpp src/PDESolver.cpp src/Interface.cpp -I include -o SolverEDP
+\end{lstlisting}
+
+\subsection{Exécution et Fonctionnement}
+Pour lancer le programme, exécutez le binaire généré :
+\begin{lstlisting}[language=bash]
+./SolverEDP
+\end{lstlisting}
+
+Le programme propose alors un menu interactif à deux options :
+
+\subsubsection{Mode 1 : Suite de Tests (Benchmark)}
+Ce mode lance une batterie de tests unitaires pour valider l'intégrité du moteur :
+\begin{itemize}
+    \item Validation de l'inversion matricielle (Algo de Thomas).
+    \item Validation de la logique des Payoffs (Call/Put).
+    \item \textbf{Test de Pricing :} Compare le résultat de l'EDP avec la formule fermée de Black-Scholes pour un set de paramètres fixes. L'erreur absolue et les Grecques sont affichées.
+\end{itemize}
+
+\subsubsection{Mode 2 : Mode Utilisateur}
+Ce mode permet de pricer une option personnalisée. L'utilisateur est invité à saisir :
+\begin{itemize}
+    \item Le prix du sous-jacent ($S_0$) et le Strike ($K$).
+    \item La maturité ($T$) en années et le taux sans risque ($r$).
+    \item La volatilité ($\sigma$) et la finesse de la grille ($N, M$).
+\end{itemize}
+Le programme calcule ensuite le prix, le Delta et le Gamma, et les affiche dans la console.
+
+\end{document}
